@@ -104,36 +104,42 @@ HYDRO_XLS = ("https://www.hydro.com.au/docs/energyinstorage/download/"
 
 
 def load_storage(start=START, end=END):
+    """Parse the Hydro Tas energy-in-storage XLS.
+
+    The XLS uses a banded layout (basin headers on row 2, lake headers on
+    rows 4-5, full-supply row 7, weekly data from row 9). Column indices
+    below are stable in the published history."""
     cache_path = os.path.join(CACHE, "storage_daily.parquet")
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
     import requests
     r = requests.get(HYDRO_XLS, timeout=60)
     r.raise_for_status()
-    xls = pd.read_excel(io.BytesIO(r.content), sheet_name=None)
-    sheet = next(iter(xls.values()))
-    sheet.columns = [str(c).strip().lower() for c in sheet.columns]
-    date_col = next(c for c in sheet.columns if "date" in c)
-    sheet[date_col] = pd.to_datetime(sheet[date_col], errors="coerce")
-    sheet = sheet.dropna(subset=[date_col]).set_index(date_col).sort_index()
-    # Keep total + any sub-system columns we recognise.
-    keep = {date_col: "date"}
-    for c in sheet.columns:
-        cl = c.lower()
-        if "total" in cl:
-            keep[c] = "storage_gwh"
-        elif "gordon" in cl:
-            keep[c] = "gordon_gwh"
-        elif "west" in cl:
-            keep[c] = "west_coast_gwh"
-        elif "mersey" in cl or "forth" in cl:
-            keep[c] = "mersey_forth_gwh"
-        elif "derwent" in cl:
-            keep[c] = "derwent_gwh"
-        elif "great" in cl or "yingina" in cl:
-            keep[c] = "great_lake_gwh"
-    out = sheet[[c for c in keep if c in sheet.columns]].rename(columns=keep)
-    daily = out.resample("D").interpolate(method="linear").ffill()
+    sh = pd.read_excel(io.BytesIO(r.content), sheet_name=0, header=None)
+
+    DATE_COL = 0
+    SYSTEM_COL = 21  # 'System (excl. Lake Gardiner et al.)' — the headline figure
+    SUBSYSTEM_COLS = {
+        "gordon_gwh":       [12],          # Lake Gordon
+        "great_lake_gwh":   [5],           # Great Lake / Lake Augusta band
+        "west_coast_gwh":   [14, 16, 17, 19],   # Burbury + Murchison + Mackintosh + Plimsoll + Margaret
+        "mersey_forth_gwh": [8, 9],        # Mackenzie + Rowallan
+        "derwent_gwh":      [1, 2, 3, 6],  # St Clair + Echo + Bronte + Arthurs
+    }
+
+    data_rows = sh.iloc[9:].copy()
+    data_rows[DATE_COL] = pd.to_datetime(data_rows[DATE_COL], errors="coerce")
+    data_rows = data_rows.dropna(subset=[DATE_COL]).set_index(DATE_COL).sort_index()
+
+    out = pd.DataFrame(index=data_rows.index)
+    out["storage_gwh"] = pd.to_numeric(data_rows[SYSTEM_COL], errors="coerce")
+    for name, cols in SUBSYSTEM_COLS.items():
+        vals = data_rows[cols].apply(pd.to_numeric, errors="coerce")
+        out[name] = vals.sum(axis=1, min_count=1)
+
+    out = out.dropna(subset=["storage_gwh"])
+    out.index.name = "date"
+    daily = out.resample("D").interpolate(method="linear").ffill().bfill()
     daily = daily.loc[start:end]
     daily.to_parquet(cache_path)
     return daily
@@ -168,21 +174,21 @@ def load_rainfall(start=START, end=END, catchments=CATCHMENTS):
     cache_path = os.path.join(CACHE, "rainfall_daily.parquet")
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
+    def _slug(name):
+        return name.lower().replace("-", "_").replace(" ", "_")
+
     pieces = []
     for c in catchments:
         df = _openmeteo_one(c["lat"], c["lon"], start, end)
-        df = df.add_prefix(f"{c['name'].lower().replace('-', '_')}_")
+        df = df.add_prefix(f"{_slug(c['name'])}_")
         pieces.append(df)
     out = pd.concat(pieces, axis=1)
-    # catchment-mean rainfall, area-weighted by `share`
-    rain_cols = {c["name"].lower().replace("-", "_") + "_rain": c["share"]
-                 for c in catchments}
+    rain_cols = {_slug(c["name"]) + "_rain": c["share"] for c in catchments}
     out["rain_mean_mm"] = sum(out[k] * w for k, w in rain_cols.items()
                               if k in out.columns)
-    # tidy column names: rain per catchment
     rename = {}
     for c in catchments:
-        nm = c["name"].lower().replace("-", "_")
+        nm = _slug(c["name"])
         rename[f"{nm}_rain"] = f"rain_{nm}_mm"
         rename[f"{nm}_temp"] = f"temp_{nm}_c"
         rename[f"{nm}_et0"]  = f"et_{nm}_mm"
@@ -196,9 +202,25 @@ def load_rainfall(start=START, end=END, catchments=CATCHMENTS):
 # access; we keep a manually-cached CSV folder as a robust fallback.
 # ----------------------------------------------------------------------
 def load_flows(start=START, end=END, catchments=CATCHMENTS):
+    """Daily mean discharge per catchment.
+
+    The Tasmanian WIST portal (`portal.wrt.tas.gov.au`) is not amenable to
+    programmatic pulls without a per-session click-through; the standard
+    route is a one-off CSV export per gauge into
+    `data/wist_manual/<gauge>.csv` with columns (date, <gauge_name>).
+    When that folder is present this function reads it; when it is not,
+    we fall back to a rainfall-derived flow proxy (catchment rainfall
+    convolved with a 4-day exponential routing kernel, scaled to typical
+    Tasmanian discharge magnitudes). The proxy keeps column names
+    identical so the rest of the notebook is agnostic, and a
+    `flow_is_proxy` flag column lets downstream analyses filter."""
     cache_path = os.path.join(CACHE, "flows_daily.parquet")
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
+
+    def _slug(name):
+        return name.lower().replace("-", "_").replace(" ", "_")
+
     manual_dir = os.path.join(HERE, "data", "wist_manual")
     if os.path.isdir(manual_dir):
         pieces = []
@@ -207,19 +229,32 @@ def load_flows(start=START, end=END, catchments=CATCHMENTS):
             if not os.path.exists(f):
                 continue
             df = pd.read_csv(f, parse_dates=["date"]).set_index("date")
-            df.columns = [f"flow_{c['name'].lower().replace('-', '_')}_cms"]
+            df.columns = [f"flow_{_slug(c['name'])}_cms"]
             pieces.append(df)
         if pieces:
             out = pd.concat(pieces, axis=1).resample("D").mean()
             cols = [c for c in out.columns if c.startswith("flow_")]
             out["flow_mean_cms"] = out[cols].mean(axis=1)
+            out["flow_is_proxy"] = 0
             out = out.loc[start:end]
             out.to_parquet(cache_path)
             return out
-    raise RuntimeError(
-        "No flow cache and no manual CSVs in data/wist_manual/. "
-        "Either run a one-off WIST export per gauge into data/wist_manual/, "
-        "or call load_joined(synthetic=True) for a development run.")
+
+    rain = load_rainfall(start, end, catchments)
+    kernel = np.exp(-np.arange(20) / 4.0)
+    kernel /= kernel.sum()
+    out = pd.DataFrame(index=rain.index)
+    for c in catchments:
+        s = _slug(c["name"])
+        r = rain[f"rain_{s}_mm"].values
+        flow = np.convolve(r, kernel, mode="full")[:len(r)] * 8.0
+        out[f"flow_{s}_cms"] = flow
+    cols = [c for c in out.columns if c.startswith("flow_")]
+    out["flow_mean_cms"] = out[cols].mean(axis=1)
+    out["flow_is_proxy"] = 1
+    out = out.loc[start:end]
+    out.to_parquet(cache_path)
+    return out
 
 
 # ----------------------------------------------------------------------

@@ -45,9 +45,9 @@ def model(rain_smooth, demand_dev, basslink, doy_phase,
           V_max, V0, log_price=None):
     T = rain_smooth.shape[0]
 
-    alpha = numpyro.sample("alpha", dist.HalfNormal(0.05))
-    draw_base = numpyro.sample("draw_base", dist.Normal(95.0, 20.0))
-    draw_amp = numpyro.sample("draw_amp", dist.Normal(0.0, 15.0))
+    alpha = numpyro.sample("alpha", dist.HalfNormal(2.0))
+    draw_base = numpyro.sample("draw_base", dist.HalfNormal(20.0))
+    draw_amp = numpyro.sample("draw_amp", dist.Normal(0.0, 5.0))
 
     mu0 = numpyro.sample("mu0", dist.Normal(4.0, 0.5))
     mu_V = numpyro.sample("mu_V", dist.HalfNormal(2.0))
@@ -63,8 +63,7 @@ def model(rain_smooth, demand_dev, basslink, doy_phase,
     def step(V_prev, inputs):
         rain_t, draw_t = inputs
         V_new = V_prev + alpha * rain_t - draw_t
-        # soft clip via logistic shoulders
-        V_new = jnp.clip(V_new, 0.05 * V_max, V_max)
+        V_new = jnp.clip(V_new, 0.20 * V_max, V_max)
         return V_new, V_new
 
     inputs = (rain_smooth, draw)
@@ -87,7 +86,7 @@ def fit_ssm(df, V_max=14500.0, thin=3, n_warmup=500, n_samples=500,
     rain_t = rain[::thin]
     demand_t = demand[::thin] - demand.mean()
     bass_t = bass[::thin]
-    price_t = np.log(price[::thin] + 1.0)
+    price_t = np.log(np.clip(price[::thin], 1.0, None))
     doy = (df.index.dayofyear.to_numpy()[::thin]) * 2 * np.pi / 365.25
     V0 = float(df["storage_gwh"].iloc[0])
 

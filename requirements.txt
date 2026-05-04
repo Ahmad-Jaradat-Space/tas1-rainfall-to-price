@@ -1,0 +1,16 @@
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+statsmodels>=0.14
+pyarrow>=15
+openpyxl>=3.1
+xlrd>=2.0
+requests>=2.31
+nemosis>=3.7
+pywavelets>=1.5
+numpyro>=0.13
+torch>=2.2
+jupyter>=1.0

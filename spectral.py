@@ -40,7 +40,7 @@ def stft(x, window_days=120, hop=15):
 
 def coherence(x, y, dt_days=1.0, n_scales=48,
               period_min_days=2.0, period_max_days=365.0,
-              smooth_t=15, smooth_s=3):
+              smooth_t=45, smooth_s=5):
     """Wavelet coherence in [0, 1] over (scale, time)."""
     cx, periods = cwt_morlet(x, dt_days, n_scales,
                              period_min_days, period_max_days)

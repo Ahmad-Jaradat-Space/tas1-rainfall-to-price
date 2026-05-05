@@ -52,30 +52,34 @@ def build_adjacency():
 def build_node_features(df, lags=(1, 7, 28)):
     """Per-node feature blocks per timestep.
 
-    For each catchment i: [rain_today, flow_today, *lags of rain]
+    For each catchment i: [rain_today, *lags of rain]
     For each storage j: [storage_today, *lags of storage]
     For the market: [price_today, demand_today, basslink_today,
                      *lags of price]
-    To keep tensor shape consistent we pad each node block to the same
-    feature width F."""
+
+    Flow is intentionally excluded: when WIST gauges are unavailable the
+    `flow_*_cms` columns are constructed in `data.load_flows` as a
+    deterministic exponential-kernel convolution of the same catchment
+    rainfall already present as a node feature, so the column carries no
+    information beyond rain-today + rain-lags. Including it as an extra
+    feature inflates apparent capacity without adding signal. To keep
+    tensor shape consistent we pad each node block to the same feature
+    width F."""
     n = len(df)
-    F = 1 + 1 + len(lags) + 1   # 8 features per node: enough headroom
+    F = 1 + len(lags) + 2   # rain_today + 3 rain lags + 2 spare slots
     X = np.zeros((n, N_NODES, F), dtype=np.float32)
 
     for i, nm in enumerate(CATCHMENT_NAMES):
         rain = df[f"rain_{nm}_mm"].values
-        flow_col = f"flow_{nm}_cms"
-        flow = df[flow_col].values if flow_col in df.columns else np.zeros(n)
         X[:, i, 0] = rain
-        X[:, i, 1] = flow
-        for k, L in enumerate(lags, start=2):
+        for k, L in enumerate(lags, start=1):
             X[L:, i, k] = rain[:-L]
 
     for j, nm in enumerate(STORAGE_NAMES):
         col = f"{nm}_gwh"
         s = df[col].values if col in df.columns else df["storage_gwh"].values / 5
         X[:, N_CATCH + j, 0] = s
-        for k, L in enumerate(lags, start=2):
+        for k, L in enumerate(lags, start=1):
             X[L:, N_CATCH + j, k] = s[:-L]
 
     price = df["price_aud_mwh"].values

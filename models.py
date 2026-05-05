@@ -34,9 +34,16 @@ def make_features(df, target="price_aud_mwh", horizon=1,
     catchment, demand, calendar, Basslink, and lagged prices."""
     out = df.copy()
     rain_cols = [c for c in df.columns if c.startswith("rain_") and c.endswith("_mm")]
+    # rain features are rolling cumulative sums ending YESTERDAY (shift 1):
+    # "how much rain fell over the last L days, observable at forecast time".
+    # The naming convention `_lag{L}` is kept for backwards compat — read it as
+    # "L-day cumulative rain, lagged by 1 to be causal".
     for L in rain_lags:
         for c in rain_cols:
-            out[f"{c}_lag{L}"] = out[c].rolling(L, min_periods=1).sum().shift(1)
+            out[f"{c}_sum{L}"] = out[c].rolling(L, min_periods=1).sum().shift(1)
+    # Today's price is observable at forecast time (we forecast t+horizon
+    # given everything up to and including t), so include it as price_lag0.
+    out["price_lag0"] = out[target]
     for L in price_lags:
         out[f"price_lag{L}"] = out[target].shift(L)
     for L in storage_lags:

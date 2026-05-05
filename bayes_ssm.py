@@ -7,7 +7,12 @@ State equation (one latent storage proxy V_t in GWh):
 
 The 'draw' stands for net generation minus minor inflows we don't
 model; we let it be a smooth seasonal function plus a constant. The
-clip is a soft logistic at V_max so the spill regime is differentiable.
+state is hard-clipped at [0.2 V_max, V_max] in `jnp.clip`. In practice
+the empirical storage minimum over 2020-2024 is ~32% of V_max, so the
+lower clip never binds; the upper clip enforces the spill regime.
+The clip is non-differentiable at the boundary, but NUTS only sees the
+gradient through the unclipped path, which is fine here because the
+posterior keeps V in the interior of the band.
 
 Observation equation:
 
@@ -54,8 +59,13 @@ def model(rain_smooth, demand_dev, basslink, doy_phase,
     k_slope = numpyro.sample("k_slope", dist.HalfNormal(8.0))
     V_thresh = numpyro.sample("V_thresh", dist.Beta(2.0, 2.0))
 
-    b_d = numpyro.sample("b_d", dist.Normal(0.0, 1e-3))
-    b_b = numpyro.sample("b_b", dist.Normal(0.0, 1e-3))
+    # Widened from N(0, 1e-3) so the data — not the prior — decides whether
+    # demand and Basslink flow have residual price effect after the storage
+    # logistic. With 1e-3 the prior was so tight it pinned both posteriors at
+    # zero by construction; 1e-2 admits coefficients up to a few cents per MW
+    # and lets the likelihood concentrate the posterior if there is signal.
+    b_d = numpyro.sample("b_d", dist.Normal(0.0, 1e-2))
+    b_b = numpyro.sample("b_b", dist.Normal(0.0, 1e-2))
     sigma = numpyro.sample("sigma", dist.HalfNormal(0.3))
 
     draw = draw_base + draw_amp * jnp.cos(doy_phase)

@@ -12,10 +12,10 @@ The deliverable artefacts are the lag distribution and the storage-conditional s
 
 ## Headline results
 
-- **Rain → storage** lag: median 3 days (90% bootstrap CI: 2–4 days). Most of the inflow is delivered to the reservoirs within a week of a wet event.
+- **Rain → storage** lag: rain reaches storage **within the same week** (weekly-anchored IRF — lag-0 weekly bin dominates). The published Hydro Tasmania storage series is weekly, linearly-interpolated to daily inside `data.load_storage`; the earlier "median 3 days" daily-IRF result was largely an interpolation artefact and has been demoted to §3.2 with the corrected weekly anchor reported in §3.2b. Real sub-weekly resolution would need WIST daily flow gauges in `data/wist_manual/`.
 - **Rain → price** half-decay: 44 days. A wet fortnight depresses TAS1 prices for roughly 6 weeks afterwards, with the negative correlation persisting (smaller in magnitude) for several months.
-- **Storage threshold**: the SSM finds a logistic kick in price at fill ratio ~17% of capacity. Above ~30% fill the price response to rainfall is essentially zero (storage spills); below the threshold a +10mm rainfall shock pulls baseline prices down by $3–17/MWh depending on decile.
-- **Forecast skill**: at next-day horizon GBR/GCN/Naive sit in the 77–80 $/MWh RMSE band; at 28-day horizon GBR (86) leads, SSM (93) closes most of the gap to it, and naive blows out to 116.
+- **Storage threshold**: the SSM finds a logistic kick in price at fill ratio ~17% of capacity. Above ~30% fill the price response to rainfall is essentially zero (storage spills); below the threshold a +10mm rainfall shock pulls baseline prices down by $3–17/MWh depending on decile (the bottom two deciles are below the empirical storage range, so they are SSM extrapolations under future-drought conditions, not historical measurements).
+- **Forecast skill**: at next-day horizon GBR (76.6) cleanly beats Naive (79.8) and GCN (79.6) — adding today's price as an observable feature in v4 uncovered the gap that v3's feature-engineering choice had hidden. At 28-day horizon GBR (86.6) leads, SSM (92.8) closes most of the gap, naive blows out to 116.
 - **Counterfactual 2024 H2**: replaying the dry-2020 vs wet-2022 rainfall traces under the SSM gives a baseline-price gap of roughly $30/MWh at year-end — a measurable hedge-book number, ~$5M/yr swing on a 200 GWh exposure.
 
 ## How the notebook is laid out
